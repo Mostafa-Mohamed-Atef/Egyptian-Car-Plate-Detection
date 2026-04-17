@@ -17,17 +17,17 @@ import random
 import glob
 
 # ── path setup ───────────────────────────────────────────────────────────────
-APP_DIR = os.path.dirname(os.path.abspath(__file__))
+APP_DIR  = os.path.dirname(os.path.abspath(__file__))
 ROOT_DIR = os.path.dirname(APP_DIR)
 sys.path.insert(0, APP_DIR)
 
 from utils import PlateDetector, compute_image_stats
 
-# ── paths ────────────────────────────────────────────────────────────────────
+# ── paths ─────────────────────────────────────────────────────────────────────
 IMAGES_DIR = os.path.join(ROOT_DIR, "Data", "EALPR Vechicles dataset", "Vehicles")
 LABELS_DIR = os.path.join(ROOT_DIR, "Data", "EALPR Vechicles dataset", "Vehicles Labeling")
 
-# ── page config ──────────────────────────────────────────────────────────────
+# ── page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
     page_title="Car Plate Detection",
     page_icon="🚗",
@@ -35,7 +35,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# ── custom CSS ───────────────────────────────────────────────────────────────
+# ── custom CSS ────────────────────────────────────────────────────────────────
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
@@ -65,16 +65,6 @@ html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
 .det-card h2 { color: #764ba2; margin: 0 0 0.3rem 0; font-size: 1.6rem; }
 .det-card p  { margin: 0; color: #555; }
 
-.stat-pill {
-    display: inline-block;
-    background: #667eea15;
-    border: 1px solid #667eea30;
-    border-radius: 8px;
-    padding: 0.4rem 1rem;
-    margin: 0.2rem;
-    font-size: 0.85rem;
-}
-
 .footer-text {
     text-align: center;
     color: #999;
@@ -82,7 +72,6 @@ html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
     font-size: 0.82rem;
 }
 
-/* Button styling */
 div.stButton > button {
     background: linear-gradient(135deg, #667eea, #764ba2);
     color: white !important;
@@ -99,22 +88,27 @@ div.stButton > button:hover {
 </style>
 """, unsafe_allow_html=True)
 
-# ── session state ────────────────────────────────────────────────────────────
-if "history" not in st.session_state:
-    st.session_state.history = []
+# ── session state init ────────────────────────────────────────────────────────
+if "history"      not in st.session_state:
+    st.session_state.history      = []
+if "rand_idx"     not in st.session_state:
+    st.session_state.rand_idx     = None   # FIX: None means "not picked yet"
+if "last_image"   not in st.session_state:
+    st.session_state.last_image   = None   # FIX: track last processed image name
 
-# ── detector ─────────────────────────────────────────────────────────────────
+# ── detector ──────────────────────────────────────────────────────────────────
 labels_dir = LABELS_DIR if os.path.isdir(LABELS_DIR) else None
-detector = PlateDetector(labels_dir=labels_dir)
+detector   = PlateDetector(model_path="Models/best.pt", labels_dir=labels_dir)
 
-# ── helper: collect sample images from dataset ──────────────────────────────
+
+# ── helper: collect sample images ─────────────────────────────────────────────
 @st.cache_data
-def get_sample_images(n=12):
+def get_sample_images(n=20):
     if not os.path.isdir(IMAGES_DIR):
         return []
     all_imgs = sorted(glob.glob(os.path.join(IMAGES_DIR, "*.jpg")))
     all_imgs += sorted(glob.glob(os.path.join(IMAGES_DIR, "*.png")))
-    if len(all_imgs) == 0:
+    if not all_imgs:
         return []
     rng = random.Random(42)
     return rng.sample(all_imgs, min(n, len(all_imgs)))
@@ -136,9 +130,9 @@ with st.sidebar:
     st.markdown("### ℹ️ About")
     st.info(
         "**Egyptian Car Plate Detection**\n\n"
-        "• OpenCV-based plate detection\n"
-        "• Supports YOLO ground-truth labels\n"
-        "• Contour + edge dual-pipeline\n"
+        "• YOLO-based plate detection\n"
+        "• Supports ground-truth labels\n"
+        "• Deep learning accuracy\n"
         "• Works with any vehicle image"
     )
 
@@ -147,10 +141,11 @@ with st.sidebar:
         n_imgs = len(glob.glob(os.path.join(IMAGES_DIR, "*.jpg")))
         st.success(f"📂 Dataset loaded — **{n_imgs}** images")
     else:
-        st.warning("Dataset folder not found. Upload images instead.")
+        st.warning("Dataset folder not found. Use Upload Image mode instead.")
 
     if st.button("🗑️ Clear History", use_container_width=True):
-        st.session_state.history = []
+        st.session_state.history    = []
+        st.session_state.last_image = None
         st.rerun()
 
 
@@ -165,8 +160,8 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# ── Image source ─────────────────────────────────────────────────────────────
-image_np = None
+# ── Image source ──────────────────────────────────────────────────────────────
+image_np   = None
 image_name = None
 
 if mode == "📤 Upload Image":
@@ -176,35 +171,49 @@ if mode == "📤 Upload Image":
         help="Upload a clear photo of a vehicle with a visible license plate.",
     )
     if uploaded is not None:
-        pil = Image.open(uploaded).convert("RGB")
-        image_np = np.array(pil)
+        pil        = Image.open(uploaded).convert("RGB")
+        image_np   = np.array(pil)
         image_name = uploaded.name
 
-else:  # Random from Dataset
+else:  # 🎲 Random from Dataset
     samples = get_sample_images(n=20)
     if samples:
-        col_btn = st.columns([1, 1, 3])
-        with col_btn[0]:
+        col_btn, _ = st.columns([1, 4])
+        with col_btn:
             if st.button("🎲 Pick Random", use_container_width=True):
-                st.session_state["rand_idx"] = random.randint(0, len(samples) - 1)
-        idx = st.session_state.get("rand_idx", 0)
-        chosen = samples[idx % len(samples)]
-        pil = Image.open(chosen).convert("RGB")
-        image_np = np.array(pil)
-        image_name = os.path.basename(chosen)
+                # Pick a different index from the current one
+                current = st.session_state.rand_idx
+                new_idx = random.randint(0, len(samples) - 1)
+                # Avoid showing the same image twice in a row
+                if len(samples) > 1:
+                    while new_idx == current:
+                        new_idx = random.randint(0, len(samples) - 1)
+                st.session_state.rand_idx = new_idx
+
+        # FIX: only show image after user has pressed the button at least once
+        if st.session_state.rand_idx is None:
+            st.info("👆 Press **Pick Random** to load an image from the dataset.")
+        else:
+            idx        = st.session_state.rand_idx
+            chosen     = samples[idx % len(samples)]
+            pil        = Image.open(chosen).convert("RGB")
+            image_np   = np.array(pil)
+            image_name = os.path.basename(chosen)
     else:
         st.warning("No dataset images found. Use **Upload Image** mode instead.")
 
-# ── Detection pipeline ───────────────────────────────────────────────────────
+
+# ── Detection pipeline ────────────────────────────────────────────────────────
 if image_np is not None:
     st.markdown("---")
 
-    col_orig, col_det = st.columns(2, gap="large")
+    # FIX: wrap detection in a spinner for responsiveness
+    with st.spinner("🔍 Detecting plates…"):
+        detections = detector.detect(image_np, image_name=image_name)
+        annotated  = detector.annotate_image(image_np, detections)
+        stats      = compute_image_stats(image_np)
 
-    # Run detection
-    detections = detector.detect(image_np, image_name=image_name)
-    annotated = detector.annotate_image(image_np, detections)
-    stats = compute_image_stats(image_np)
+    col_orig, col_det = st.columns(2, gap="large")
 
     with col_orig:
         st.markdown("#### 📷 Original Image")
@@ -214,10 +223,10 @@ if image_np is not None:
         st.markdown("#### 🔍 Detection Results")
         st.image(annotated, caption=f"{len(detections)} plate(s) detected", use_container_width=True)
 
-    # ── Result summary ───────────────────────────────────────────────────────
-    n_det = len(detections)
+    # ── Result summary ────────────────────────────────────────────────────────
+    n_det      = len(detections)
     source_tag = detections[0]["source"] if n_det > 0 else "—"
-    best_conf = max((d["confidence"] for d in detections), default=0)
+    best_conf  = max((d["confidence"] for d in detections), default=0.0)
 
     st.markdown(
         f'<div class="det-card">'
@@ -228,7 +237,7 @@ if image_np is not None:
         unsafe_allow_html=True,
     )
 
-    # ── Tabs: Crops / Stats / Details ────────────────────────────────────────
+    # ── Tabs ──────────────────────────────────────────────────────────────────
     tab_crops, tab_stats, tab_details = st.tabs(
         ["🔎 Plate Crops", "📊 Image Statistics", "📋 Detection Details"]
     )
@@ -236,38 +245,57 @@ if image_np is not None:
     with tab_crops:
         crops = detector.extract_plate_crops(image_np, detections)
         if crops:
-            crop_cols = st.columns(min(len(crops), 4))
-            for i, crop in enumerate(crops):
-                with crop_cols[i % len(crop_cols)]:
-                    st.image(crop, caption=f"Plate {i+1}", use_container_width=True)
+            # ── Best match shown prominently at the top ──────────────────────
+            st.markdown("##### 🏆 Best Match — Most Likely the Actual Plate")
+            best_col, _ = st.columns([1, 2])
+            with best_col:
+                best_conf_val = detections[0]["confidence"] if detections else 0
+                st.image(
+                    crops[0],
+                    caption=f"★ Confidence: {best_conf_val:.0%}  ·  "
+                            f"Location: ({detections[0]['x']}, {detections[0]['y']})  ·  "
+                            f"{detections[0]['w']}×{detections[0]['h']} px",
+                    use_container_width=True,
+                )
+
+            # ── Secondary candidates (if any) ────────────────────────────────
+            if len(crops) > 1:
+                st.markdown("---")
+                st.markdown(f"##### Other Candidates ({len(crops) - 1})")
+                st.caption(
+                    "These regions have lower confidence and are less likely to be plates."
+                )
+                n_cols    = min(len(crops) - 1, 4)
+                crop_cols = st.columns(n_cols)
+                for i, crop in enumerate(crops[1:], start=1):
+                    with crop_cols[(i - 1) % n_cols]:
+                        cconf = detections[i]["confidence"] if i < len(detections) else 0
+                        st.image(
+                            crop,
+                            caption=f"Candidate #{i}  ·  {cconf:.0%}",
+                            use_container_width=True,
+                        )
         else:
             st.info("No plate regions to crop.")
 
     with tab_stats:
         m1, m2, m3, m4 = st.columns(4)
-        m1.metric("Resolution", f"{stats['width']}×{stats['height']}")
-        m2.metric("Brightness", f"{stats['mean_brightness']:.0f}/255")
+        m1.metric("Resolution",    f"{stats['width']}×{stats['height']}")
+        m2.metric("Brightness",    f"{stats['mean_brightness']:.0f}/255")
         m3.metric("Contrast (σ)", f"{stats['contrast']:.1f}")
-        m4.metric("Sharpness", f"{stats['sharpness']:.0f}")
+        m4.metric("Sharpness",    f"{stats['sharpness']:.0f}")
 
-        # Edge density bar
         st.markdown(f"**Edge Density:** {stats['edge_density']}%")
         st.progress(min(stats["edge_density"] / 30.0, 1.0))
 
-        # Brightness histogram
-        gray = cv2.cvtColor(image_np, cv2.COLOR_RGB2GRAY)
+        gray      = cv2.cvtColor(image_np, cv2.COLOR_RGB2GRAY)
         hist_vals = cv2.calcHist([gray], [0], None, [64], [0, 256]).flatten()
-        fig_hist = go.Figure(
-            go.Bar(
-                x=list(range(64)),
-                y=hist_vals,
-                marker_color="#667eea",
-            )
+        fig_hist  = go.Figure(
+            go.Bar(x=list(range(64)), y=hist_vals, marker_color="#667eea")
         )
         fig_hist.update_layout(
             title="Brightness Histogram",
-            xaxis_title="Bin",
-            yaxis_title="Pixel Count",
+            xaxis_title="Bin", yaxis_title="Pixel Count",
             height=280,
             margin=dict(l=40, r=20, t=40, b=40),
             paper_bgcolor="rgba(0,0,0,0)",
@@ -278,17 +306,17 @@ if image_np is not None:
     with tab_details:
         if detections:
             df = pd.DataFrame(detections)
-            df["area"] = df["w"] * df["h"]
+            df["area"]         = df["w"] * df["h"]
             df["aspect_ratio"] = (df["w"] / df["h"]).round(2)
             df = df.rename(columns={
                 "x": "X", "y": "Y", "w": "Width", "h": "Height",
                 "confidence": "Confidence", "source": "Method",
                 "area": "Area (px²)", "aspect_ratio": "Aspect Ratio",
             })
-            display_cols = ["X", "Y", "Width", "Height", "Confidence", "Method", "Area (px²)", "Aspect Ratio"]
+            display_cols = ["X", "Y", "Width", "Height", "Confidence",
+                            "Method", "Area (px²)", "Aspect Ratio"]
             st.dataframe(df[display_cols], use_container_width=True, hide_index=True)
 
-            # Confidence chart
             fig_conf = px.bar(
                 df, x=df.index.astype(str), y="Confidence",
                 color="Confidence",
@@ -301,16 +329,21 @@ if image_np is not None:
         else:
             st.info("No detections to display.")
 
-    # ── Save to history ──────────────────────────────────────────────────────
-    st.session_state.history.append({
-        "time": datetime.now().strftime("%H:%M:%S"),
-        "image": image_name or "upload",
-        "plates": n_det,
-        "best_conf": round(best_conf, 2),
-        "source": source_tag,
-    })
+    # ── Save to history — only when the image actually changes ────────────────
+    # FIX: was appending on every Streamlit rerun (tab switch, widget interaction, etc.)
+    # Now we track the last processed image name and only append when it changes.
+    if image_name != st.session_state.last_image:
+        st.session_state.history.append({
+            "time":      datetime.now().strftime("%H:%M:%S"),
+            "image":     image_name or "upload",
+            "plates":    n_det,
+            "best_conf": round(best_conf, 2),
+            "source":    source_tag,
+        })
+        st.session_state.last_image = image_name
 
-# ── History section ──────────────────────────────────────────────────────────
+
+# ── History section ───────────────────────────────────────────────────────────
 if st.session_state.history:
     st.markdown("---")
     with st.expander("📈 Detection History", expanded=False):
@@ -325,7 +358,7 @@ if st.session_state.history:
             mime="text/csv",
         )
 
-# ── Footer ───────────────────────────────────────────────────────────────────
+# ── Footer ────────────────────────────────────────────────────────────────────
 st.markdown(
     '<div class="footer-text">'
     "🚗 Egyptian Car Plate Detection System &nbsp;·&nbsp; "
